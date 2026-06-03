@@ -37,7 +37,28 @@ Mac 本地代理端口:        127.0.0.1:8888
 
 ## 1. 启动 Mac 反向代理
 
-如果远端服务器不能直接访问外网，可以在 Mac 上先启动一个本地 HTTP 代理，例如监听 `127.0.0.1:8888`，再通过 SSH 反向转发到服务器的 `127.0.0.1:18080`。
+如果远端服务器不能直接访问外网，可以在 Mac 上先准备一个本地 HTTP 代理，再通过 SSH 反向转发到服务器的 `127.0.0.1:18080`。
+
+如果 Mac 可以直连国外网络，可以用 `tinyproxy` 在 Mac 上启动一个本地 HTTP 代理：
+
+```bash
+brew install tinyproxy
+sudo tinyproxy
+```
+
+确认 `tinyproxy` 监听成功：
+
+```bash
+sudo lsof -nP -iTCP:8888 -sTCP:LISTEN
+```
+
+看到类似下面的输出即可：
+
+```text
+tinyproxy ... TCP *:8888 (LISTEN)
+```
+
+如果 Mac 也不能直连国外网络，可以使用 Clash 等代理工具。先查看 Clash 的 HTTP 代理端口，例如 `7897`，然后把下面命令里的 `8888` 替换成 Clash 的代理端口。
 
 在 Mac 终端运行：
 
