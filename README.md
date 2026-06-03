@@ -1,0 +1,255 @@
+# Codex Server Setup
+
+这套脚本用于在远端服务器上安装 Codex CLI，并把 Codex 的历史、登录信息、配置和会话数据保存到一个持久化目录。它同时会修复 Codex Desktop SSH 连接时需要的 `app-server-control` socket 目录，避免把整个 `/root/.codex` 放到不支持 Unix socket 的共享文件系统上。
+
+主要解决“远端服务器上稳定使用 Codex”的三个痛点：
+
+> **一句话：让 Codex 在“会重启、没公网、用共享盘”的远端服务器上也能稳定工作。**
+
+**✓ 重启不丢历史**  
+把 Codex 的登录、历史、会话、配置和数据库文件保存到持久盘，即使服务器重启后 `/root` 被清空，也能恢复原来的 Codex 状态。
+
+**✓ 网络受限也能用**  
+通过 Mac 的 SSH 反向代理，让服务器上的 Codex CLI、下载脚本和 VS Code Remote Codex 插件都能访问外网。
+
+**✓ 桌面版 SSH 能连上**  
+保留 `/root/.codex/app-server-control` 为本地真实目录，避免 FUSE/网络文件系统不支持 Unix socket 导致 Codex Desktop 连接失败。
+
+最终目标是同一台远端服务器同时支持：
+
+- **⌨️ 服务器终端的Codex CLI** 
+- **🧩 VS Code Remote 的 Codex 插件**
+- **🖥️ Mac Codex Desktop 通过 SSH 连接远端项目**
+
+## 准备信息
+
+开始前先确认这些路径和端口：
+
+```text
+脚本仓库目录:            codex-server-setup
+Codex 持久化目录:       /path/to/persistent/.codex
+服务器本地 Codex 目录:   /root/.codex
+服务器代理端口:          127.0.0.1:18080
+Mac 本地代理端口:        127.0.0.1:8888
+```
+
+`/path/to/persistent/.codex` 可以是已有的 `.codex`，也可以是全新的空目录。全新用户第一次运行时，`link.sh` 会预先创建常见的 Codex 目录软链接，让后续登录、会话、历史、配置和数据库文件直接写入持久目录。
+
+## 1. 启动 Mac 反向代理
+
+如果远端服务器不能直接访问外网，可以在 Mac 上先启动一个本地 HTTP 代理，例如监听 `127.0.0.1:8888`，再通过 SSH 反向转发到服务器的 `127.0.0.1:18080`。
+
+在 Mac 终端运行：
+
+```bash
+ssh -p <ssh-port> \
+  -i /path/to/private-key.pem \
+  -N \
+  -R 18080:127.0.0.1:8888 \
+  <user>@<ssh-host>
+```
+
+保持这个 SSH 进程运行。然后在服务器终端检查代理是否可用：
+
+```bash
+curl -x http://127.0.0.1:18080 https://www.google.com
+```
+
+如果这个命令能返回网页内容，说明服务器可以通过 Mac 的反向代理访问外网。`download.sh` 和 `wrapper.sh` 默认都会使用 `http://127.0.0.1:18080`。
+
+## 2. 初始化服务器
+
+在服务器 clone 仓库：
+
+```bash
+export HTTP_PROXY=http://127.0.0.1:18080
+export HTTPS_PROXY=http://127.0.0.1:18080
+export ALL_PROXY=http://127.0.0.1:18080
+git clone https://github.com/fx-hit/codex-server-setup.git
+cd codex-server-setup
+```
+
+如果服务器能直连 GitHub SSH，也可以改用：
+
+```bash
+git clone git@github.com:fx-hit/codex-server-setup.git
+cd codex-server-setup
+```
+
+一键初始化：
+
+```bash
+bash setup.sh /path/to/persistent/.codex
+```
+
+`setup.sh` 会按顺序执行：
+
+1. `download.sh`: 下载最新 Codex Linux 二进制并安装到 `/usr/local/bin/codex`
+2. `wrapper.sh`: 把原始二进制保存为 `/usr/local/bin/codex-real`，并创建带代理环境变量的 `/usr/local/bin/codex`
+3. `link.sh`: 配置 `/root/.codex`，让历史/配置保存在持久盘，同时让 `app-server-control` 保持本地真实目录
+
+也可以手动分步执行：
+
+```bash
+bash download.sh
+bash wrapper.sh
+bash link.sh /path/to/persistent/.codex
+```
+
+## 3. 验证服务器状态
+
+检查 Codex 是否安装成功：
+
+```bash
+codex --version
+```
+
+检查 `/root/.codex/app-server-control` 是否在本地文件系统上，并且不是软链接：
+
+```bash
+stat -f -c '%T %n' /root/.codex /root/.codex/app-server-control
+ls -la /root/.codex/app-server-control
+```
+
+期望 `/root/.codex` 和 `/root/.codex/app-server-control` 都在本地文件系统上，例如 `overlayfs`；`app-server-control` 应该是目录，不是软链接。
+
+## 4. 配置 VS Code Remote 代理
+
+如果要在远端服务器的 VS Code 里使用 Codex 插件，需要在 VS Code 的远端设置里配置代理：
+
+1. 打开远端窗口的 Settings。
+2. 切到 `Remote [SSH: <host>]` 作用域。
+3. 找到 `Application > Proxy`。
+4. 将 `Http: Proxy` 设置为：
+
+   ```text
+   http://127.0.0.1:18080
+   ```
+
+5. 按当前环境经验，也在同一页的 `Http: No Proxy` 处填入：
+
+   ```text
+   http://127.0.0.1:18080
+   ```
+
+## 5. 配置 Codex Desktop SSH
+
+可以在 Mac 的 `~/.ssh/config` 里复制一份专门给 Codex Desktop 使用的 SSH Host alias，避免影响原本给 VS Code 使用的连接配置。
+
+示例：
+
+```sshconfig
+Host my-remote
+  HostName <ssh-host>
+  User <user>
+  Port <ssh-port>
+  IdentityFile /path/to/private-key.pem
+
+Host my-remote-codex
+  HostName <ssh-host>
+  User <user>
+  Port <ssh-port>
+  IdentityFile /path/to/private-key.pem
+  ServerAliveInterval 30
+  ServerAliveCountMax 3
+```
+
+在 Codex Desktop 里选择 `my-remote-codex` 这个 host 连接远端项目。
+
+## 脚本参数
+
+`link.sh` 和 `setup.sh` 都支持把持久化目录作为第一个参数传入；也可以用 `PERSISTENT_CODEX_HOME` 环境变量传入。
+
+```bash
+PERSISTENT_CODEX_HOME=/path/to/persistent/.codex bash link.sh
+```
+
+常用环境变量：
+
+```bash
+CODEX_DOWNLOAD_PROXY=http://127.0.0.1:18080
+PERSISTENT_CODEX_HOME=/path/to/persistent/.codex
+CODEX_HOME=/root/.codex
+```
+
+## 目录结构
+
+`link.sh` 配置完成后的结构：
+
+```text
+/root/.codex                         本地真实目录
+/root/.codex/app-server-control      本地真实目录，用于 socket
+/root/.codex/auth.json               软链接到持久盘
+/root/.codex/sessions                软链接到持久盘
+/root/.codex/*.sqlite                软链接到持久盘
+```
+
+对于完全从零开始的新用户，`link.sh` 会在持久目录为空时预置这些常见路径：
+
+```text
+auth.json
+config.toml
+history.jsonl
+installation_id
+models_cache.json
+goals_1.sqlite*
+logs_2.sqlite*
+memories_1.sqlite*
+state_5.sqlite*
+sessions/
+attachments/
+plugins/
+skills/
+cache/
+```
+
+如果 Codex 后续版本新增了其他本地文件，重新运行一次 `link.sh /path/to/persistent/.codex` 会把非 runtime 的本地文件迁移到持久目录并建立软链接。
+
+## 排障
+
+### 为什么 link.sh 不直接软链接整个 /root/.codex
+
+Codex Desktop SSH 会在 `/root/.codex/app-server-control` 下创建 Unix domain socket。当前持久盘可能是 FUSE/网络文件系统，不支持 socket 文件，所以不能把整个 `/root/.codex` 软链接过去。
+
+实际遇到的服务器端日志：
+
+```text
+WARNING: failed to clean up stale arg0 temp dirs: Directory not empty (os error 39)
+Error: Not supported (os error 95)
+```
+
+如果把 `app-server-control` 本身做成软链接，Codex 还会报：
+
+```text
+WARNING: failed to clean up stale arg0 temp dirs: Directory not empty (os error 39)
+Error: socket directory path exists and is not a directory: /root/.codex/app-server-control
+```
+
+`link.sh` 的做法是让 `/root/.codex` 和 `/root/.codex/app-server-control` 保持本地真实目录，只把历史、登录、配置和数据库文件软链接到持久盘。这样既能保留历史记录，又能让 Codex Desktop SSH 正常创建 app-server socket。
+
+### Mac Desktop 日志
+
+Mac 桌面端对应的日志现象是 SSH 已经认证成功，但连接远端 app-server socket 失败。
+
+在 Mac 上可以用下面的命令过滤最近 5 分钟的 Codex Desktop 日志：
+
+```bash
+LOGDIR="$HOME/Library/Logs/com.openai.codex"
+
+find "$LOGDIR" -type f -mmin -5 -print0 \
+  | xargs -0 grep -nEi \
+  'proxy_command_failed|failed to connect to socket|desktop-ssh-websocket|1006|socket hang up' \
+  2>/dev/null
+```
+
+典型日志：
+
+```text
+Authenticated to <ssh-host> using "publickey".
+Sending command: ... codex app-server proxy --sock "${CODEX_HOME:-$HOME/.codex}/app-server-control/desktop-ssh-websocket-v0.sock"
+Error: failed to connect to socket at /root/.codex/app-server-control/desktop-ssh-websocket-v0.sock
+
+Caused by:
+    No such file or directory (os error 2)
+Codex app-server websocket closed (code=1006)
+```
