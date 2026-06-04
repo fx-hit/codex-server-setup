@@ -117,12 +117,52 @@ bash wrapper.sh
 bash link.sh /path/to/persistent/.codex
 ```
 
+### 服务器重启后的恢复顺序
+
+如果服务器重启后 `/root` 会被清空，需要先恢复 `/root/.codex` 的软链接结构，再启动 Codex CLI、VS Code Codex 插件或 Codex Desktop SSH：
+
+```bash
+bash /path/to/codex-server-setup/link.sh /path/to/persistent/.codex
+```
+
+如果重启后已经先运行过 `codex`、VS Code Codex 插件或 Codex Desktop SSH，Codex 可能已经在本地重新生成了一套 `/root/.codex` 缓存。此时状态会分叉：旧登录和历史还在持久目录，新缓存却写在本地 `/root/.codex`。
+
+如果确认这套误生成的本地缓存不需要保留，可以先删除它，再重新链接：
+
+```bash
+rm -rf /root/.codex
+bash /path/to/codex-server-setup/link.sh /path/to/persistent/.codex
+```
+
+如果不确定里面是否有新会话或新配置，先备份再重新链接：
+
+```bash
+mv /root/.codex "/root/.codex.local-cache.$(date +%Y%m%d%H%M%S)"
+bash /path/to/codex-server-setup/link.sh /path/to/persistent/.codex
+```
+
 ## 3. 验证服务器状态
 
 检查 Codex 是否安装成功：
 
 ```bash
 codex --version
+```
+
+新用户在服务器终端登录 Codex：
+
+```bash
+codex login
+codex login status
+```
+
+因为第 2 步已经执行过 `link.sh`，`/root/.codex/auth.json`、`/root/.codex/config.toml`、`/root/.codex/history.jsonl` 和会话目录都已经指向持久目录。登录产生的认证缓存会通过这些软链接写到 `/path/to/persistent/.codex`。
+
+登录后可以检查认证文件是否仍然指向持久目录：
+
+```bash
+ls -la /root/.codex/auth.json
+ls -la /path/to/persistent/.codex/auth.json
 ```
 
 检查 `/root/.codex/app-server-control` 是否在本地文件系统上，并且不是软链接：
