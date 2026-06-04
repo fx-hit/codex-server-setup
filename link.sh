@@ -24,7 +24,7 @@ EOF
   exit 2
 fi
 
-LOCAL_CODEX_HOME="${CODEX_HOME:-/root/.codex}"
+LOCAL_CODEX_HOME="${CODEX_HOME:-${HOME:-/root}/.codex}"
 CONTROL_DIR="$LOCAL_CODEX_HOME/app-server-control"
 
 mkdir -p "$PERSISTENT_CODEX_HOME"
