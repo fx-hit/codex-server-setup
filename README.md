@@ -35,13 +35,63 @@ Mac 本地代理端口:          127.0.0.1:8888
 
 `/path/to/persistent/.codex` 可以是已有的 `.codex`，也可以是全新的空目录。全新用户第一次运行时，`link.sh` 会预先创建常见的 Codex 目录软链接，让后续登录、会话、历史、配置和数据库文件直接写入持久目录。
 
-先设置 `CODEX_HOME`。`root` 用户的 `$HOME` 是 `/root`；普通用户指的是非 root 的登录账号，例如 `alice` 或 `yfx`，它的 `$HOME` 通常是 `/home/<用户名>`。所以这条命令同时适用于 root 用户和普通用户：
+`CODEX_HOME` 默认就是 `$HOME/.codex`，一般不需要手动设置。`root` 用户的 `$HOME` 是 `/root`；普通用户指的是非 root 的登录账号，例如 `alice` 或 `yfx`，它的 `$HOME` 通常是 `/home/<用户名>`。
 
-```bash
-export CODEX_HOME="$HOME/.codex"
+`CODEX_HOME` 必须留在服务器本地文件系统上，不能整体放到共享盘。只有想使用非默认本地目录时，才需要显式设置 `CODEX_HOME`。共享盘只用于保存持久化数据。
+
+## 0. 原理图
+
+远程开发从 Mac 上有三个入口：
+
+- VS Code Remote SSH 到服务器后打开 Codex 插件，这个不依赖服务器上的 Codex CLI；
+
+- Codex Desktop SSH 到服务器后调用服务器上的 Codex CLI/app-server；
+
+- Mac 终端 SSH 到服务器后直接运行 Codex CLI。
+
+服务器侧对应两个服务形态：VS Code 的 Codex 插件和 Codex CLI/app-server。两者访问外网时都走 Mac 反向代理；服务器端状态通过软链接写到持久盘。
+
+```text
+Mac                                                    Internet/GitHub/OpenAI
++--------------------------------------------------+              ^
+| 🧩 VS Code                                       |              |
+|    Remote SSH -> server project                  |              |
+|    opens VS Code Remote Codex plugin             |              |
+|    does not depend on server codex CLI           |              |
+|                                                  |              |
+| 🖥️ Codex Desktop                                |              |
+|    SSH -> server project                         |              |
+|    uses server codex CLI/app-server              |              |
+|                                                  |              |
+| ⌨️ Terminal app                                  |              |
+|    SSH -> server shell                           |              |
+|    runs server codex CLI                         |              |
+|                                                  |              |
+| Local HTTP proxy: 127.0.0.1:8888 ----------------+--------------+
++----------------------+---------------------------+
+                       | SSH
+                       v
+Remote server          | reverse tunnel: ssh -R 18080:127.0.0.1:8888
++----------------------+---------------------------+
+| server proxy endpoint: 127.0.0.1:18080 ----------+
+|                                                  |
+| 🧩 VS Code Remote 的 Codex 插件                  |
+|    runs in VS Code remote extension host         |
+|    uses proxy -> http://127.0.0.1:18080 ---------+
+|                                                  |
+| ⌨️ 服务器终端的 Codex CLI                        |
+|    used by Mac Terminal SSH                      |
+|    uses proxy -> http://127.0.0.1:18080 ---------+
+|                                                  |
+| 🖥️ Mac Codex Desktop 通过 SSH 连接远端项目       |
+|    uses server codex CLI/app-server              |
+|    uses proxy -> http://127.0.0.1:18080 ---------+
+|                                                  |
+| $CODEX_HOME/app-server-control stays local       |
+| for Desktop socket                               |
++--------------------------------------------------+
 ```
 
-`CODEX_HOME` 必须留在服务器本地文件系统上，不能整体放到共享盘。共享盘只用于保存持久化数据。
 
 ## 1. 启动 Mac 反向代理
 
