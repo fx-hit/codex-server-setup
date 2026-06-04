@@ -114,8 +114,8 @@ bash setup.sh "$PERSISTENT_CODEX_HOME"
 
 `setup.sh` 会按顺序执行：
 
-1. `download.sh`: 下载最新 Codex Linux 二进制并安装到 `/usr/local/bin/codex`
-2. `wrapper.sh`: 把原始二进制保存为 `/usr/local/bin/codex-real`，并创建带代理环境变量的 `/usr/local/bin/codex`
+1. `download.sh`: 下载最新 Codex Linux 二进制并安装到 `$HOME/.local/bin/codex`
+2. `wrapper.sh`: 把原始二进制保存为 `$HOME/.local/bin/codex-real`，并创建带代理环境变量的 `$HOME/.local/bin/codex`
 3. `link.sh`: 配置 `$CODEX_HOME`，让历史/配置保存在持久盘，同时让 `app-server-control` 保持本地真实目录
 
 也可以手动分步执行：
@@ -158,6 +158,7 @@ bash /path/to/codex-server-setup/link.sh "$PERSISTENT_CODEX_HOME"
 检查 Codex 是否安装成功：
 
 ```bash
+export PATH="$HOME/.local/bin:$PATH"
 codex --version
 ```
 
@@ -241,7 +242,21 @@ PERSISTENT_CODEX_HOME=/path/to/persistent/.codex bash link.sh
 
 ```bash
 CODEX_DOWNLOAD_PROXY=http://127.0.0.1:18080
+CODEX_INSTALL_DIR="$HOME/.local/bin"
 PERSISTENT_CODEX_HOME=/path/to/persistent/.codex
+```
+
+`download.sh` 默认安装到官方安装脚本使用的用户级目录 `$HOME/.local/bin/codex`。如果当前 shell 的 `PATH` 里还没有 `$HOME/.local/bin`，先临时加入：
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+也可以显式指定安装位置：
+
+```bash
+CODEX_INSTALL_PATH=/usr/local/bin/codex bash download.sh
+CODEX_BIN=/usr/local/bin/codex CODEX_REAL=/usr/local/bin/codex-real bash wrapper.sh
 ```
 
 `CODEX_HOME` 通常直接使用当前登录用户的 home 目录：

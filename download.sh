@@ -5,7 +5,8 @@ CODEX_RELEASE_URL="${CODEX_RELEASE_URL:-https://github.com/openai/codex/releases
 CODEX_DOWNLOAD_PROXY="${CODEX_DOWNLOAD_PROXY:-http://127.0.0.1:18080}"
 ARCHIVE_PATH="${CODEX_ARCHIVE_PATH:-/tmp/codex.tar.gz}"
 EXTRACT_DIR="${CODEX_EXTRACT_DIR:-/tmp/codex-bin}"
-INSTALL_PATH="${CODEX_INSTALL_PATH:-/usr/local/bin/codex}"
+INSTALL_DIR="${CODEX_INSTALL_DIR:-${HOME:-/root}/.local/bin}"
+INSTALL_PATH="${CODEX_INSTALL_PATH:-$INSTALL_DIR/codex}"
 
 curl_args=(-L -o "$ARCHIVE_PATH")
 if [ -n "$CODEX_DOWNLOAD_PROXY" ]; then
@@ -26,8 +27,18 @@ if [ ! -f "$binary_path" ]; then
   exit 1
 fi
 
+mkdir -p "$(dirname "$INSTALL_PATH")"
 install -m 755 "$binary_path" "$INSTALL_PATH"
 
 echo "Installed raw Codex binary:"
-command -v codex || true
-codex --version
+echo "  $INSTALL_PATH"
+"$INSTALL_PATH" --version
+
+install_dir="$(dirname "$INSTALL_PATH")"
+case ":$PATH:" in
+  *":$install_dir:"*) ;;
+  *)
+    echo "Add Codex to PATH before running it by name:"
+    echo "  export PATH=\"$install_dir:\$PATH\""
+    ;;
+esac
