@@ -147,10 +147,10 @@ ls -la /root/.codex/app-server-control
    http://127.0.0.1:18080
    ```
 
-5. 按当前环境经验，也在同一页的 `Http: No Proxy` 处填入：
+5. 在同一页的 `Http: No Proxy` 处填入本机地址，让 VS Code 访问远端本机服务时不要走代理：
 
    ```text
-   http://127.0.0.1:18080
+   127.0.0.1,localhost,::1
    ```
 
 ## 5. 配置 Codex Desktop SSH
