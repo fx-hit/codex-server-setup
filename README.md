@@ -253,6 +253,7 @@ config.toml
 history.jsonl
 installation_id
 models_cache.json
+session_index.jsonl
 goals_1.sqlite*
 logs_2.sqlite*
 memories_1.sqlite*

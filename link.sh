@@ -89,6 +89,7 @@ persistent_files=(
   history.jsonl
   installation_id
   models_cache.json
+  session_index.jsonl
   goals_1.sqlite
   goals_1.sqlite-shm
   goals_1.sqlite-wal
