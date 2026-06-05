@@ -276,9 +276,12 @@ Host my-remote-codex
   IdentityFile /path/to/private-key.pem
   ServerAliveInterval 30
   ServerAliveCountMax 3
+  # RemoteForward 18080 127.0.0.1:8888
 ```
 
 在 Codex Desktop 里选择 `my-remote-codex` 这个 host 连接远端项目。
+
+`RemoteForward 18080 127.0.0.1:8888` 会在 SSH 连接建立时自动创建和前面 `ssh -N -R 18080:127.0.0.1:8888` 等价的反向代理转发，两种方式会占用同一个远端端口 `18080`，不能同时使用；按自己的使用习惯二选一即可。
 
 ## 脚本参数
 
