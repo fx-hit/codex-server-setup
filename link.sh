@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Keep persistent Codex data on the shared volume, but keep
-# /root/.codex/app-server-control as a real local directory. Codex Desktop SSH
-# creates a Unix domain socket there, and the shared FUSE filesystem does not
-# support socket files.
+# Keep persistent Codex data on the shared volume, but keep runtime-only
+# directories on local storage. Codex Desktop SSH creates a Unix domain socket
+# under app-server-control, and Codex's arg0 launcher writes startup cache under
+# tmp; both are a poor fit for shared FUSE filesystems.
 
 if [ $# -gt 1 ]; then
   echo "Usage: $0 <persistent-codex-home>" >&2
@@ -26,6 +26,9 @@ fi
 
 LOCAL_CODEX_HOME="${CODEX_HOME:-${HOME:-/root}/.codex}"
 CONTROL_DIR="$LOCAL_CODEX_HOME/app-server-control"
+LOCAL_TMP_DIR="$LOCAL_CODEX_HOME/tmp"
+CODEX_BIN="${CODEX_INSTALL_PATH:-${CODEX_INSTALL_DIR:-${HOME:-/root}/.local/bin}/codex}"
+STANDALONE_CODEX="$LOCAL_CODEX_HOME/packages/standalone/current/codex"
 
 mkdir -p "$PERSISTENT_CODEX_HOME"
 chmod 700 "$PERSISTENT_CODEX_HOME"
@@ -40,13 +43,12 @@ mkdir -p "$LOCAL_CODEX_HOME"
 chmod 700 "$LOCAL_CODEX_HOME"
 
 # If Codex created real local files before this script ran, move those files
-# into the persistent directory. app-server-control is runtime-only and stays
-# local.
+# into the persistent directory. Runtime-only directories stay local.
 shopt -s dotglob nullglob
 for local_entry in "$LOCAL_CODEX_HOME"/*; do
   name="$(basename "$local_entry")"
   case "$name" in
-    .|..|app-server-control)
+    .|..|app-server-control|app-server-daemon|db-backups|packages|tmp|tmp.bak.*|state_5.sqlite|state_5.sqlite-shm|state_5.sqlite-wal)
       continue
       ;;
   esac
@@ -67,6 +69,34 @@ mkdir -p "$CONTROL_DIR"
 chmod 700 "$CONTROL_DIR"
 rm -f "$CONTROL_DIR/app-server-startup.lock"
 
+if [ -L "$LOCAL_TMP_DIR" ]; then
+  rm "$LOCAL_TMP_DIR"
+elif [ -e "$LOCAL_TMP_DIR" ] && [ ! -d "$LOCAL_TMP_DIR" ]; then
+  mv "$LOCAL_TMP_DIR" "$LOCAL_TMP_DIR.bak.$(date +%Y%m%d%H%M%S)"
+fi
+mkdir -p "$LOCAL_TMP_DIR"
+chmod 700 "$LOCAL_TMP_DIR"
+rm -rf "$LOCAL_TMP_DIR/arg0"
+
+for stale_arg0_dir in "$LOCAL_CODEX_HOME"/tmp.bak.*/arg0; do
+  [ -e "$stale_arg0_dir" ] || continue
+  rm -rf "$stale_arg0_dir"
+done
+
+mkdir -p "$(dirname "$STANDALONE_CODEX")"
+if [ -x "$CODEX_BIN" ]; then
+  ln -sfn "$CODEX_BIN" "$STANDALONE_CODEX"
+fi
+
+for state_file in \
+  "$LOCAL_CODEX_HOME/state_5.sqlite" \
+  "$LOCAL_CODEX_HOME/state_5.sqlite-shm" \
+  "$LOCAL_CODEX_HOME/state_5.sqlite-wal"; do
+  if [ -L "$state_file" ]; then
+    rm "$state_file"
+  fi
+done
+
 persistent_dirs=(
   .tmp
   archived_sessions
@@ -77,7 +107,6 @@ persistent_dirs=(
   sessions
   shell_snapshots
   skills
-  tmp
   vendor_imports
 )
 
@@ -99,9 +128,6 @@ persistent_files=(
   memories_1.sqlite
   memories_1.sqlite-shm
   memories_1.sqlite-wal
-  state_5.sqlite
-  state_5.sqlite-shm
-  state_5.sqlite-wal
 )
 
 for name in "${persistent_dirs[@]}"; do
@@ -131,12 +157,12 @@ for name in "${persistent_files[@]}"; do
   ln -s "$persistent_entry" "$local_entry"
 done
 
-# Link persistent data back into the local CODEX_HOME. Skip app-server-control:
-# it must remain a real local directory, not a symlink.
+# Link persistent data back into the local CODEX_HOME. Skip runtime-only
+# directories: they must remain real local directories, not symlinks.
 for persistent_entry in "$PERSISTENT_CODEX_HOME"/*; do
   name="$(basename "$persistent_entry")"
   case "$name" in
-    .|..|.codex|app-server-control|app-server-control.bak.*)
+    .|..|.codex|app-server-control|app-server-control.bak.*|app-server-daemon|db-backups|packages|tmp|tmp.bak.*|state_5.sqlite|state_5.sqlite-shm|state_5.sqlite-wal)
       continue
       ;;
   esac
@@ -178,4 +204,6 @@ fi
 echo "Codex link setup completed."
 echo "  local CODEX_HOME: $LOCAL_CODEX_HOME"
 echo "  local control dir: $CONTROL_DIR"
+echo "  local tmp dir: $LOCAL_TMP_DIR"
+echo "  local standalone codex: $STANDALONE_CODEX"
 echo "  persistent data: $PERSISTENT_CODEX_HOME"

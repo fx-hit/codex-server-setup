@@ -44,14 +44,29 @@ EOF
 
 chmod +x "$CODEX_BIN"
 
+codex_bin_dir="$(dirname "$CODEX_BIN")"
+path_line="export PATH=\"$codex_bin_dir:\$PATH\""
+for rc_file in "${HOME:-/root}/.bashrc" "${HOME:-/root}/.zshrc"; do
+  if [ -e "$rc_file" ] && ! grep -Fqx "$path_line" "$rc_file"; then
+    printf '\n%s\n' "$path_line" >> "$rc_file"
+  fi
+done
+
+if [ "$(id -u)" -eq 0 ] && [ "$CODEX_BIN" != "/usr/local/bin/codex" ]; then
+  if [ ! -e /usr/local/bin/codex ] || [ "$(readlink /usr/local/bin/codex 2>/dev/null || true)" = "$CODEX_BIN" ]; then
+    ln -sfn "$CODEX_BIN" /usr/local/bin/codex
+  fi
+fi
+
 echo "Installed Codex proxy wrapper:"
 "$CODEX_BIN" --version
 
-codex_bin_dir="$(dirname "$CODEX_BIN")"
 case ":$PATH:" in
   *":$codex_bin_dir:"*) ;;
   *)
-    echo "Add Codex to PATH before running it by name:"
-    echo "  export PATH=\"$codex_bin_dir:\$PATH\""
+    if ! command -v codex >/dev/null 2>&1; then
+      echo "Add Codex to PATH before running it by name:"
+      echo "  export PATH=\"$codex_bin_dir:\$PATH\""
+    fi
     ;;
 esac

@@ -1,6 +1,6 @@
 # Codex Server Setup
 
-这套脚本用于在远端服务器上安装 Codex CLI，并把 Codex 的历史、登录信息、配置和会话数据保存到一个持久化目录。它同时会修复 Codex Desktop SSH 连接时需要的 `app-server-control` socket 目录，避免把整个 `CODEX_HOME` 放到不支持 Unix socket 的共享文件系统上。
+这套脚本用于在远端服务器上安装 Codex CLI，并把 Codex 的历史、登录信息、配置和会话数据保存到一个持久化目录。它同时会修复 Codex Desktop SSH 连接时需要的 `app-server-control` socket 目录和 Codex 启动缓存目录，避免把整个 `CODEX_HOME` 放到不支持 Unix socket 或不适合运行时缓存的共享文件系统上。
 
 主要解决“远端服务器上稳定使用 Codex”的三个痛点：
 
@@ -13,7 +13,7 @@
 通过 Mac 的 SSH 反向代理，让服务器上的 Codex CLI、下载脚本和 VS Code Remote Codex 插件都能访问外网。
 
 **✓ 桌面版 SSH 能连上**  
-保留 `$CODEX_HOME/app-server-control` 为本地真实目录，避免 FUSE/网络文件系统不支持 Unix socket 导致 Codex Desktop 连接失败。
+保留 `$CODEX_HOME/app-server-control`、`$CODEX_HOME/tmp` 和 `$CODEX_HOME/packages` 为本地真实目录，避免 FUSE/网络文件系统不支持 Unix socket 或积累运行时缓存导致 Codex Desktop 连接失败。
 
 最终目标是同一台远端服务器同时支持：
 
@@ -37,7 +37,7 @@ Mac 本地代理端口:          127.0.0.1:8888
 
 `CODEX_HOME` 默认就是 `$HOME/.codex`，一般不需要手动设置。`root` 用户的 `$HOME` 是 `/root`；普通用户指的是非 root 的登录账号，例如 `alice` 或 `yfx`，它的 `$HOME` 通常是 `/home/<用户名>`。
 
-`CODEX_HOME` 必须留在服务器本地文件系统上，不能整体放到共享盘。只有想使用非默认本地目录时，才需要显式设置 `CODEX_HOME`。共享盘只用于保存持久化数据。
+`CODEX_HOME` 必须留在服务器本地文件系统上，不能整体放到共享盘。只有想使用非默认本地目录时，才需要显式设置 `CODEX_HOME`。共享盘只用于保存持久化数据，`app-server-control`、`tmp`、`packages` 和 `state_5.sqlite*` 这类运行时状态会留在本地。
 
 ## 0. 原理图
 
@@ -87,8 +87,8 @@ Remote server          | reverse tunnel: ssh -R 18080:127.0.0.1:8888
 |    uses server codex CLI/app-server              |
 |    uses proxy -> http://127.0.0.1:18080 ---------+
 |                                                  |
-| $CODEX_HOME/app-server-control stays local       |
-| for Desktop socket                               |
+| $CODEX_HOME/app-server-control, tmp and packages |
+| stay local for Desktop socket/runtime cache      |
 +--------------------------------------------------+
 ```
 
@@ -166,12 +166,22 @@ bash setup.sh "$PERSISTENT_CODEX_HOME"
 
 1. `download.sh`: 下载最新 Codex Linux 二进制并安装到 `$HOME/.local/bin/codex`
 2. `wrapper.sh`: 把原始二进制保存为 `$HOME/.local/bin/codex-real`，并创建带代理环境变量的 `$HOME/.local/bin/codex`
-3. `link.sh`: 配置 `$CODEX_HOME`，让历史/配置保存在持久盘，同时让 `app-server-control` 保持本地真实目录
+3. `link.sh`: 配置 `$CODEX_HOME`，让历史/配置保存在持久盘，同时让 `app-server-control`、`tmp`、`packages` 和 `state_5.sqlite*` 保持本地
+
+`wrapper.sh` 还会把 `$HOME/.local/bin` 写入当前用户的 `.bashrc`/`.zshrc`。如果当前用户是 `root`，并且 `/usr/local/bin/codex` 没有被其他文件占用，还会创建 `/usr/local/bin/codex -> $HOME/.local/bin/codex` 的软链接，方便 SSH 远程命令和 Codex Desktop 在默认 `PATH` 下直接找到 `codex`。
 
 也可以手动分步执行：
 
 ```bash
 bash download.sh
+bash wrapper.sh
+export PERSISTENT_CODEX_HOME=/path/to/persistent/.codex
+bash link.sh "$PERSISTENT_CODEX_HOME"
+```
+
+如果已经下载过 Codex，可以跳过 `download.sh`：
+
+```bash
 bash wrapper.sh
 export PERSISTENT_CODEX_HOME=/path/to/persistent/.codex
 bash link.sh "$PERSISTENT_CODEX_HOME"
@@ -208,6 +218,7 @@ bash /path/to/codex-server-setup/link.sh "$PERSISTENT_CODEX_HOME"
 检查 Codex 是否安装成功：
 
 ```bash
+export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 export PATH="$HOME/.local/bin:$PATH"
 codex --version
 ```
@@ -228,14 +239,25 @@ ls -la "$CODEX_HOME/auth.json"
 ls -la "$PERSISTENT_CODEX_HOME/auth.json"
 ```
 
-检查 `$CODEX_HOME/app-server-control` 是否在本地文件系统上，并且不是软链接：
+检查 `$CODEX_HOME/app-server-control`、`$CODEX_HOME/tmp` 和 `$CODEX_HOME/packages` 是否在本地文件系统上，并且不是软链接：
 
 ```bash
-stat -f -c '%T %n' "$CODEX_HOME" "$CODEX_HOME/app-server-control"
+stat -f -c '%T %n' "$CODEX_HOME" "$CODEX_HOME/app-server-control" "$CODEX_HOME/tmp" "$CODEX_HOME/packages"
+ls -ld "$CODEX_HOME/app-server-control" "$CODEX_HOME/tmp" "$CODEX_HOME/packages"
+```
+
+期望 `$CODEX_HOME`、`$CODEX_HOME/app-server-control`、`$CODEX_HOME/tmp` 和 `$CODEX_HOME/packages` 都在本地文件系统上，例如 `overlayfs`；它们应该是目录，不是软链接。
+
+检查 Codex Desktop SSH 依赖的 app-server daemon：
+
+```bash
+codex app-server daemon start
+codex app-server daemon enable-remote-control
+codex app-server daemon version
 ls -la "$CODEX_HOME/app-server-control"
 ```
 
-期望 `$CODEX_HOME` 和 `$CODEX_HOME/app-server-control` 都在本地文件系统上，例如 `overlayfs`；`app-server-control` 应该是目录，不是软链接。
+期望 `daemon version` 返回 `status: running`，并且 `$CODEX_HOME/app-server-control` 下出现本地 Unix socket。
 
 ## 4. 配置 VS Code Remote 代理
 
@@ -276,12 +298,9 @@ Host my-remote-codex
   IdentityFile /path/to/private-key.pem
   ServerAliveInterval 30
   ServerAliveCountMax 3
-  # RemoteForward 18080 127.0.0.1:8888
 ```
 
 在 Codex Desktop 里选择 `my-remote-codex` 这个 host 连接远端项目。
-
-`RemoteForward 18080 127.0.0.1:8888` 会在 SSH 连接建立时自动创建和前面 `ssh -N -R 18080:127.0.0.1:8888` 等价的反向代理转发，两种方式会占用同一个远端端口 `18080`，不能同时使用；按自己的使用习惯二选一即可。
 
 ## 脚本参数
 
@@ -337,9 +356,12 @@ CODEX_HOME="$HOME/.codex" bash setup.sh /path/to/persistent/.codex
 ```text
 $CODEX_HOME                         本地真实目录
 $CODEX_HOME/app-server-control      本地真实目录，用于 socket
+$CODEX_HOME/tmp                     本地真实目录，用于启动缓存
+$CODEX_HOME/packages                本地真实目录，用于 app-server standalone 路径
+$CODEX_HOME/state_5.sqlite*         本地状态库，可由 Codex 重建
 $CODEX_HOME/auth.json               软链接到持久盘
 $CODEX_HOME/sessions                软链接到持久盘
-$CODEX_HOME/*.sqlite                软链接到持久盘
+$CODEX_HOME/logs_2.sqlite*          软链接到持久盘
 ```
 
 对于完全从零开始的新用户，`link.sh` 会在持久目录为空时预置这些常见路径：
@@ -354,7 +376,6 @@ session_index.jsonl
 goals_1.sqlite*
 logs_2.sqlite*
 memories_1.sqlite*
-state_5.sqlite*
 sessions/
 attachments/
 plugins/
@@ -370,6 +391,12 @@ cache/
 
 Codex Desktop SSH 会在 `$CODEX_HOME/app-server-control` 下创建 Unix domain socket。当前持久盘可能是 FUSE/网络文件系统，不支持 socket 文件，所以不能把整个 `CODEX_HOME` 软链接过去。
 
+另外，Codex 启动器会在 `$CODEX_HOME/tmp/arg0` 下创建启动缓存。这个目录不需要持久化，放在共享盘上还可能积累大量 `codex-arg0*` 临时目录，启动时出现类似下面的 warning：
+
+```text
+WARNING: failed to clean up stale arg0 temp dirs: Directory not empty (os error 39)
+```
+
 实际遇到的服务器端日志：
 
 ```text
@@ -384,7 +411,7 @@ WARNING: failed to clean up stale arg0 temp dirs: Directory not empty (os error 
 Error: socket directory path exists and is not a directory: /root/.codex/app-server-control
 ```
 
-`link.sh` 的做法是让 `$CODEX_HOME` 和 `$CODEX_HOME/app-server-control` 保持本地真实目录，只把历史、登录、配置和数据库文件软链接到持久盘。这样既能保留历史记录，又能让 Codex Desktop SSH 正常创建 app-server socket。
+`link.sh` 的做法是让 `$CODEX_HOME`、`$CODEX_HOME/app-server-control`、`$CODEX_HOME/tmp`、`$CODEX_HOME/packages` 和 `$CODEX_HOME/state_5.sqlite*` 保持本地，只把历史、登录、配置和可持久化数据库文件软链接到持久盘。这样既能保留历史记录，又能让 Codex Desktop SSH 正常创建 app-server socket。
 
 ### Mac Desktop 日志
 
